@@ -1,0 +1,64 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Define folders
+raw_data_folder <- "raw_data"
+processed_data_folder <- "processed_data"
+
+# Ensure the processed_data folder exists
+if (!dir.exists(processed_data_folder)) {
+  dir.create(processed_data_folder)
+}
+
+# Define the files and columns to extract
+files_to_process <- list(
+  "games.csv" = c("gameId", "season", "week", "homeTeamAbbr", "visitorTeamAbbr"),
+  "plays.csv" = c("gameId", "playId", "quarter", "specialTeamsPlayType", "specialTeamsResult", 
+                  "kickerId", "yardlineNumber", "gameClock", "preSnapHomeScore", "preSnapVisitorScore", 
+                  "kickLength", "absoluteYardlineNumber"),
+  "players.csv" = c("nflId", "height", "weight", "Position", "displayName"),
+  "tracking2018.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
+                         "position", "team", "frameId", "playId", "gameId"),
+  "tracking2019.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
+                         "position", "team", "frameId", "playId", "gameId"),
+  "tracking2020.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
+                         "position", "team", "frameId", "playId", "gameId"),
+  "PFFScoutingData.csv" = c("gameId", "playId", "snapDetail")
+)
+
+# Process each file
+for (file_name in names(files_to_process)) {
+  raw_file_path <- file.path(raw_data_folder, file_name)
+  processed_file_path <- file.path(processed_data_folder, file_name)
+  
+  if (file.exists(raw_file_path)) {
+    df <- read.csv(raw_file_path)
+    df <- df %>% select(all_of(files_to_process[[file_name]]))
+    
+    if (file_name == "plays.csv") {
+      df <- df %>% filter(specialTeamsPlayType %in% c("Field Goal", "Extra Point"))
+    } else if (file_name == "players.csv") {
+      df <- df %>% filter(Position == "K")
+    } else if (grepl("tracking", file_name)) {
+      df <- df %>%
+        filter(position == "K" & event %in% c("extra_point_attempt", "extra_point", "field_goal_attempt", "field_goal"))
+    }
+    
+    # Save the processed file
+    write.csv(df, processed_file_path, row.names = FALSE)
+    cat("Processed and saved:", file_name, "\n")
+  } else {
+    cat("File not found:", file_name, "\n")
+  }
+}
+
+cat("Data processing complete!\n")
+
+```
+
