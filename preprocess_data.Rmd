@@ -18,7 +18,7 @@ if (!dir.exists(processed_data_folder)) {
 
 # Define the files and columns to extract
 files_to_process <- list(
-  "games.csv" = c("gameId", "season", "week", "homeTeamAbbr", "visitorTeamAbbr"),
+  "games.csv" = c("gameId", "season", "week", "homeTeamAbbr", "visitorTeamAbbr", "gameTimeEastern"),
   "plays.csv" = c("gameId", "playId", "quarter", "specialTeamsPlayType", "specialTeamsResult", 
                   "kickerId", "yardlineNumber", "gameClock", "preSnapHomeScore", "preSnapVisitorScore", 
                   "kickLength", "absoluteYardlineNumber"),
@@ -60,5 +60,129 @@ for (file_name in names(files_to_process)) {
 
 cat("Data processing complete!\n")
 
+```
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(readr)
+
+# Define file paths
+processed_data_folder <- "processed_data"
+weather_data_url <- "https://raw.githubusercontent.com/ThompsonJamesBliss/WeatherData/refs/heads/master/data/games_weather.csv"
+
+# Load the weather data directly from GitHub
+weather <- read_csv(weather_data_url)
+weather <- weather %>% rename(gameId = game_id)
+
+# Function to merge and save dataset with weather data
+merge_and_save <- function(file_name) {
+  file_path <- file.path(processed_data_folder, file_name)
+  
+  # Check if file exists before attempting to read
+  if (file.exists(file_path)) {
+    df <- read_csv(file_path)
+    
+    # Merge with weather data using "gameId"
+    df_merged <- df %>%
+      left_join(weather, by = "gameId")
+    
+    # Save the new merged dataset
+    output_path <- file.path(processed_data_folder, paste0("weather_", file_name))
+    write_csv(df_merged, output_path)
+    
+    print(paste("Merged and saved:", file_name))
+  } else {
+    print(paste("File not found:", file_name))
+  }
+}
+
+# List of files to merge
+files_to_merge <- c("tracking2018.csv", "tracking2019.csv", "tracking2020.csv")
+
+# Apply function to all files
+lapply(files_to_merge, merge_and_save)
+
+print("Weather data merged with all relevant datasets!")
+
+```
+
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(readr)
+library(lubridate)
+
+# Define file paths
+processed_data_folder <- "processed_data"
+game_time_url <- "https://raw.githubusercontent.com/ThompsonJamesBliss/WeatherData/refs/heads/master/data/games.csv"
+plays_file <- file.path(processed_data_folder, "plays.csv")
+
+# Load the game time data directly from GitHub
+game_time_not_est <- read_csv(game_time_url)
+
+# Data transformations for game time
+game_time_not_est <- game_time_not_est %>%
+  rename(gameId = game_id) %>%
+  filter(Season >= 2018) %>%  # Keep only seasons from 2018 onwards
+  select(-StadiumName)        # Remove the StadiumName column
+
+# Load the plays.csv data
+plays_data <- read_csv(plays_file)
+
+# Function to process weather tracking data and retain closest TimeMeasureUTC
+process_weather_data <- function(year) {
+  # Load the weather tracking data
+  weather_tracking_file <- file.path(processed_data_folder, paste0("weather_tracking", year, ".csv"))
+  weather_tracking <- read_csv(weather_tracking_file)
+  
+  # Join weather_tracking data with game_time_not_est based on gameId
+  weather_tracking <- weather_tracking %>%
+    left_join(game_time_not_est, by = "gameId")
+  
+  # Convert TimeMeasure to datetime object and adjust to UTC
+  weather_tracking <- weather_tracking %>%
+    mutate(
+      TimeMeasure = mdy_hm(TimeMeasure),
+      TimeMeasureUTC = TimeMeasure + hours(TZOffset)
+    )
+  
+  # Delete specified columns
+  weather_tracking <- weather_tracking %>%
+    select(-Source, -DistanceToStation, -TimeMeasure, -TimeEndGame, -TZOffset)
+  
+  # Group by frameId and playId and retain the closest TimeMeasureUTC before each play time
+  filtered_data <- weather_tracking %>%
+    mutate(
+      time = ymd_hms(time),
+      TimeMeasureUTC = ymd_hms(TimeMeasureUTC)
+    ) %>%
+    group_by(frameId, playId) %>%
+    filter(TimeMeasureUTC <= time) %>%              # Ensure TimeMeasureUTC is before the play time
+    arrange(desc(TimeMeasureUTC)) %>%               # Sort by TimeMeasureUTC descending
+    slice(1) %>%                                    # Retain only the closest one
+    ungroup()
+  
+  # Move gameId to the front
+  filtered_data <- filtered_data %>%
+    select(gameId, everything())
+  
+  # Merge plays data into weather tracking data for the given year
+  merged_data <- filtered_data %>%
+    inner_join(plays_data, by = "gameId") %>%  # Merge only by gameId
+    select(-nflId, -playId.x, -playId.y, -Season, -specialTeamsPlayType, -kickerId)  # Remove specified columns
+  
+  # Save the merged data to a new CSV
+  output_file <- file.path(processed_data_folder, paste0("wt_with_plays", year, ".csv"))
+  write_csv(merged_data, output_file)
+  
+  message("Processed and merged data for year ", year, " saved as ", output_file)
+}
+
+# Process and save for each year (2018, 2019, and 2020)
+process_weather_data(2018)
+process_weather_data(2019)
+process_weather_data(2020)
 ```
 
