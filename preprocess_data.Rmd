@@ -11,11 +11,6 @@ library(dplyr)
 raw_data_folder <- "raw_data"
 processed_data_folder <- "processed_data"
 
-# Ensure the processed_data folder exists
-if (!dir.exists(processed_data_folder)) {
-  dir.create(processed_data_folder)
-}
-
 # Define the files and columns to extract
 files_to_process <- list(
   "games.csv" = c("gameId", "season", "week", "homeTeamAbbr", "visitorTeamAbbr", "gameTimeEastern"),
@@ -24,11 +19,11 @@ files_to_process <- list(
                   "kickLength", "absoluteYardlineNumber"),
   "players.csv" = c("nflId", "height", "weight", "Position", "displayName"),
   "tracking2018.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
-                         "position", "team", "frameId", "playId", "gameId"),
+                         "position", "team", "frameId", "playId", "gameId", "playDirection"),
   "tracking2019.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
-                         "position", "team", "frameId", "playId", "gameId"),
+                         "position", "team", "frameId", "playId", "gameId", "playDirection"),
   "tracking2020.csv" = c("time", "x", "y", "s", "a", "dis", "o", "dir", "event", "nflId", "displayName", 
-                         "position", "team", "frameId", "playId", "gameId"),
+                         "position", "team", "frameId", "playId", "gameId", "playDirection"),
   "PFFScoutingData.csv" = c("gameId", "playId", "snapDetail")
 )
 
@@ -204,6 +199,57 @@ files <- c("processed_data/wt_with_plays_filtered2018.csv",
 # Apply function to each file
 lapply(files, process_and_overwrite)
 ```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Read the weather tracking data to get valid gameId-playId pairs
+wt_df <- read_csv("processed_data/wt_with_plays_filtered2018.csv")
+
+# Extract unique gameId-playId pairs from the weather data
+valid_pairs <- wt_df %>% 
+  select(gameId, playId) %>% 
+  distinct()
+
+# Create football_only2018 with filtering by team and valid gameId-playId pairs
+football_only2018 <- read.csv("raw_data/tracking2018.csv") %>% 
+  filter(team == "football") %>%
+  inner_join(valid_pairs, by = c("gameId", "playId"))
+
+# Print summary of the filtered dataset
+cat("Created football_only2018 with", nrow(football_only2018), 
+    "rows from", nrow(valid_pairs), "unique gameId-playId pairs\n")
+
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# For 2019
+wt_df_2019 <- read_csv("processed_data/wt_with_plays_filtered2019.csv")
+valid_pairs_2019 <- wt_df_2019 %>% 
+  select(gameId, playId) %>% 
+  distinct()
+football_only2019 <- read.csv("raw_data/tracking2019.csv") %>% 
+  filter(team == "football") %>%
+  inner_join(valid_pairs_2019, by = c("gameId", "playId"))
+cat("Created football_only2019 with", nrow(football_only2019), 
+    "rows from", nrow(valid_pairs_2019), "unique gameId-playId pairs\n")
+
+# For 2020
+wt_df_2020 <- read_csv("processed_data/wt_with_plays_filtered2020.csv")
+valid_pairs_2020 <- wt_df_2020 %>% 
+  select(gameId, playId) %>% 
+  distinct()
+football_only2020 <- read.csv("raw_data/tracking2020.csv") %>% 
+  filter(team == "football") %>%
+  inner_join(valid_pairs_2020, by = c("gameId", "playId"))
+cat("Created football_only2020 with", nrow(football_only2020), 
+    "rows from", nrow(valid_pairs_2020), "unique gameId-playId pairs\n")
+
+```
+
 ```{r}
 library(dplyr)
 library(readr)
@@ -227,27 +273,45 @@ filter_data <- function(year) {
   # Ensure data is sorted by frameId
   df <- df[order(df$gameId, df$playId, df$frameId), ]
   
-  # Find rows where event is of interest
+  # Define events of interest
   events_of_interest <- c("field_goal", "field_goal_missed", "extra_point", "extra_point_missed")
-  event_rows <- df[df$event %in% events_of_interest, ]
+  
+  # Get unique play IDs that contain events of interest
+  event_plays <- df %>%
+    filter(event %in% events_of_interest) %>%
+    select(gameId, playId) %>%
+    distinct()
   
   # Initialize an empty data frame to store the filtered rows
   filtered_df <- data.frame()
   
-  # Iterate over each unique play (gameId, playId)
-  for (i in 1:nrow(event_rows)) {
-    # Get the index of the event row
-    event_index <- which(df$gameId == event_rows$gameId[i] & 
-                         df$playId == event_rows$playId[i] & 
-                         df$event == event_rows$event[i])[1]
+  # Iterate over each unique play with events of interest
+  for (i in 1:nrow(event_plays)) {
+    current_gameId <- event_plays$gameId[i]
+    current_playId <- event_plays$playId[i]
     
-    # Check if there are enough rows before and after the event row
-    start_index <- max(1, event_index - 2)
-    end_index <- min(nrow(df), event_index + 2)
+    # Get all rows for the current play
+    play_rows <- df[df$gameId == current_gameId & df$playId == current_playId, ]
     
-    # Append the relevant rows to the filtered data frame
-    filtered_df <- rbind(filtered_df, df[start_index:end_index, ])
+    # Calculate absolute distance from x=0 for each row
+    play_rows$dist_from_zero <- abs(play_rows$x)
+    
+    # Sort by distance from x=0
+    play_rows <- play_rows[order(play_rows$dist_from_zero), ]
+    
+    # Take the 5 rows (or fewer if not available)
+    rows_to_take <- min(5, nrow(play_rows))
+    selected_rows <- play_rows[1:rows_to_take, ]
+    
+    # Sort back by frameId to maintain temporal order
+    selected_rows <- selected_rows[order(selected_rows$frameId), ]
+    
+    # Append the selected rows to the filtered data frame
+    filtered_df <- rbind(filtered_df, selected_rows)
   }
+  
+  # Remove the temporary distance column
+  filtered_df$dist_from_zero <- NULL
   
   # Save the filtered football coordinates
   write.csv(filtered_df, paste0("analysis_data/football_coords_", year, ".csv"), row.names = FALSE)
@@ -269,11 +333,9 @@ filter_data <- function(year) {
   return(filtered_wt_df)
 }
 
-# Apply the function to each year
-for (year in c(2018, 2019, 2020)) {
-  filtered_wt_df <- filter_data(year)
-  print(paste("Filtered data for", year, "saved successfully."))
-}
+filter_data(2018)
+filter_data(2019)
+filter_data(2020)
 ```
 
 ```{r}
@@ -330,71 +392,318 @@ for (year in c(2018, 2019, 2020)) {
   merged_df <- merge_data(year)
   print(paste("Merged data for", year, "saved successfully."))
 }
-
 ```
 
 ```{r}
 # Load necessary libraries
 library(dplyr)
-library(broom)
+library(readr)
 
-# Function to predict ball position at goalposts
-predict_ball_position <- function(merged_df) {
+# Function to merge data and include playDirection
+merge_data_with_direction <- function(year) {
+  # Load merged data
+  merged_df <- read_csv(paste0("analysis_data/merged_fpw_", year, ".csv"))
+  
+  # Load raw tracking data to get playDirection
+  raw_tracking <- read_csv(paste0("processed_data/tracking", year, ".csv"))
+  
+  # Extract unique playDirection for each gameId-playId combination
+  play_directions <- raw_tracking %>%
+    select(gameId, playId, playDirection) %>%
+    distinct()
+  
+  # Join playDirection with merged data
+  merged_df_with_direction <- merged_df %>%
+    left_join(play_directions, by = c("gameId", "playId"))
+  
+  # Save the updated merged data frame
+  write.csv(merged_df_with_direction, paste0("analysis_data/merged_fpw_direction_", year, ".csv"), row.names = FALSE)
+  
+  return(merged_df_with_direction)
+}
+
+# Apply the function to each year
+for (year in c(2018, 2019, 2020)) {
+  merged_df_with_direction <- merge_data_with_direction(year)
+  print(paste("Merged data with playDirection for", year, "saved successfully."))
+}
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Function to merge data
+merge_data <- function(year) {
+  # Load data
+  if (year == 2018) {
+    football_df <- read.csv("analysis_data/football_coords_2018.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2018.csv")
+  } else if (year == 2019) {
+    football_df <- read.csv("analysis_data/football_coords_2019.csv")
+    wt_df <- read_csv("analysis_data_zero/playerweather_coords_2019.csv")
+  } else if (year == 2020) {
+    football_df <- read.csv("analysis_data/football_coords_2020.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2020.csv")
+  } else {
+    stop("Invalid year. Please use 2018, 2019, or 2020.")
+  }
+  
+  # Merge the two data frames
+  merged_df <- football_df %>%
+    left_join(wt_df, by = c("gameId", "frameId", "playId")) %>%
+    select(
+      time = time.x, x_ball = x.x, y_ball = y.x, s_ball = s.x, a_ball = a.x, dis_ball = dis.x,
+      event = event.x, nflId = nflId.y, displayName = displayName.y, 
+      #position = position.y, team = team.y,
+      frameId = frameId, playId = playId, gameId = gameId,
+      #Temperature = Temperature, DewPoint = DewPoint, Humidity = Humidity, Precipitation = Precipitation,
+      #WindSpeed = WindSpeed, WindDirection = WindDirection, Pressure = Pressure, EstimatedCondition = EstimatedCondition,
+      #quarter = quarter,
+      #specialTeamsPlayType = specialTeamsPlayType,
+      #specialTeamsResult = specialTeamsResult,
+      #kickerId = kickerId,
+      #yardlineNumber = yardlineNumber,
+      #gameClock = gameClock,
+      #preSnapHomeScore = preSnapHomeScore,
+      #preSnapVisitorScore = preSnapVisitorScore,
+      #kickLength = kickLength,
+      #absoluteYardlineNumber = absoluteYardlineNumber
+    )
+  
+  # Save the merged data frame
+  write.csv(merged_df, paste0("analysis_data/merged_fpw_", year, ".csv"), row.names = FALSE)
+  
+  return(merged_df)
+}
+
+# Apply the function to each year
+for (year in c(2018, 2019, 2020)) {
+  merged_df <- merge_data(year)
+  print(paste("Merged data for", year, "saved successfully."))
+}
+```
+
+
+```{r}
+library(dplyr)
+library(readr)
+
+# Function to filter data based on playDirection
+filter_data <- function(year) {
+  # Load data
+  if (year == 2018) {
+    df <- football_only2018
+    wt_df <- read_csv("processed_data/wt_with_plays_filtered2018.csv")
+  } else if (year == 2019) {
+    df <- football_only2019
+    wt_df <- read_csv("processed_data/wt_with_plays_filtered2019.csv")
+  } else if (year == 2020) {
+    df <- football_only2020
+    wt_df <- read_csv("processed_data/wt_with_plays_filtered2020.csv")
+  } else {
+    stop("Invalid year. Please use 2018, 2019, or 2020.")
+  }
+  
+  # Ensure data is sorted by frameId
+  df <- df[order(df$gameId, df$playId, df$frameId), ]
+  
+  # Define events of interest
+  events_of_interest <- c("field_goal", "field_goal_missed", "extra_point", "extra_point_missed")
+  
+  # Get unique play IDs that contain events of interest
+  event_plays <- df %>%
+    filter(event %in% events_of_interest) %>%
+    select(gameId, playId) %>%
+    distinct()
+  
+  # Initialize an empty data frame to store the filtered rows
+  filtered_df <- data.frame()
+  
+  # Iterate over each unique play with events of interest
+  for (i in 1:nrow(event_plays)) {
+    current_gameId <- event_plays$gameId[i]
+    current_playId <- event_plays$playId[i]
+    
+    # Get all rows for the current play
+    play_rows <- df[df$gameId == current_gameId & df$playId == current_playId, ]
+    
+    # Skip if play has fewer than 1 row
+    if (nrow(play_rows) < 1) {
+      next
+    }
+    
+    # Get the playDirection for this play
+    play_direction <- unique(play_rows$playDirection)[1]
+    
+    if (play_direction == "left") {
+      # For left direction, find rows closest to x=0
+      play_rows$dist_from_target <- abs(play_rows$x)
+      target_value <- 0
+    } else {
+      # For right direction, find rows closest to x=120
+      play_rows$dist_from_target <- abs(play_rows$x - 120)
+      target_value <- 120
+    }
+    
+    # Sort by distance from target
+    play_rows <- play_rows[order(play_rows$dist_from_target), ]
+    
+    # Take the 5 rows (or fewer if not available)
+    rows_to_take <- min(5, nrow(play_rows))
+    selected_rows <- play_rows[1:rows_to_take, ]
+    
+    # Sort back by frameId to maintain temporal order
+    selected_rows <- selected_rows[order(selected_rows$frameId), ]
+    
+    # Remove the temporary distance column
+    selected_rows$dist_from_target <- NULL
+    
+    # Append the selected rows to the filtered data frame
+    filtered_df <- rbind(filtered_df, selected_rows)
+  }
+  
+  # Save the filtered football coordinates
+  write.csv(filtered_df, paste0("analysis_data/football_coords_", year, ".csv"), row.names = FALSE)
+  
+  # Extract gameId, frameId, and playId from filtered_df
+  ids_to_filter <- unique(data.frame(
+    gameId = filtered_df$gameId,
+    frameId = filtered_df$frameId,
+    playId = filtered_df$playId
+  ))
+  
+  # Filter the weather data based on these ids
+  filtered_wt_df <- wt_df %>%
+    filter(paste(gameId, frameId, playId) %in% paste(ids_to_filter$gameId, ids_to_filter$frameId, ids_to_filter$playId))
+  
+  # Save the filtered weather data
+  write.csv(filtered_wt_df, paste0("analysis_data/playerweather_coords_", year, ".csv"), row.names = FALSE)
+  
+  return(filtered_wt_df)
+}
+
+filter_data(2018)
+filter_data(2019)
+filter_data(2020)
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Function to merge data
+merge_data <- function(year) {
+  # Load data
+  if (year == 2018) {
+    football_df <- read.csv("analysis_data/football_coords_2018.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2018.csv")
+  } else if (year == 2019) {
+    football_df <- read.csv("analysis_data/football_coords_2019.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2019.csv")
+  } else if (year == 2020) {
+    football_df <- read.csv("analysis_data/football_coords_2020.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2020.csv")
+  } else {
+    stop("Invalid year. Please use 2018, 2019, or 2020.")
+  }
+  
+  # Merge the two data frames
+  merged_df <- football_df %>%
+    left_join(wt_df, by = c("gameId", "frameId", "playId")) %>%
+    select(
+      time = time.x, x_ball = x.x, y_ball = y.x, s_ball = s.x, a_ball = a.x, dis_ball = dis.x,
+      event = event.x, nflId = nflId.y, displayName = displayName.y, 
+      #position = position.y, team = team.y,
+      frameId = frameId, playId = playId, gameId = gameId,
+      #Temperature = Temperature, DewPoint = DewPoint, Humidity = Humidity, Precipitation = Precipitation,
+      #WindSpeed = WindSpeed, WindDirection = WindDirection, Pressure = Pressure, EstimatedCondition = EstimatedCondition,
+      #quarter = quarter,
+      #specialTeamsPlayType = specialTeamsPlayType,
+      #specialTeamsResult = specialTeamsResult,
+      #kickerId = kickerId,
+      #yardlineNumber = yardlineNumber,
+      #gameClock = gameClock,
+      #preSnapHomeScore = preSnapHomeScore,
+      #preSnapVisitorScore = preSnapVisitorScore,
+      #kickLength = kickLength,
+      #absoluteYardlineNumber = absoluteYardlineNumber
+    )
+  
+  # Save the merged data frame
+  write.csv(merged_df, paste0("analysis_data/merged_fpw_", year, ".csv"), row.names = FALSE)
+  
+  return(merged_df)
+}
+
+# Apply the function to each year
+for (year in c(2018, 2019, 2020)) {
+  merged_df <- merge_data(year)
+  print(paste("Merged data for", year, "saved successfully."))
+}
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Function to predict ball position at goalposts for a given year
+predict_ball_position <- function(year) {
+  # Load the dataset
+  file_name <- paste0("analysis_data/merged_fpw_", year, ".csv")
+  data <- read.csv(file_name)
+  
   # Initialize an empty data frame to store predictions
   predictions <- data.frame()
   
-  # Chunk the data into groups of 5
-  n_groups <- nrow(merged_df) %/% 5
+  # Calculate the number of groups (each group consists of 5 rows)
+  n_groups <- nrow(data) %/% 5
   
-  # Iterate over each group
+  # Iterate over each group of 5 rows
   for (i in 1:n_groups) {
     start_row <- (i - 1) * 5 + 1
     end_row <- i * 5
     
-    group_data <- merged_df[start_row:end_row, ]
+    # Extract the group data
+    play_data <- data[start_row:end_row, ]
     
-    # Convert time to numeric (seconds since the start of the play)
-    group_data$time_num <- as.numeric(difftime(group_data$time, min(group_data$time), units = "secs"))
+    # Fit a linear model for y_ball based on x_ball
+    model_y <- lm(y_ball ~ x_ball, data = play_data)
     
-    # Fit a linear model for x and y coordinates
-    model_x <- lm(x_ball ~ time_num, data = group_data)
-    model_y <- lm(y_ball ~ time_num, data = group_data)
+    # Check if the model has valid coefficients
+    if (any(is.na(coef(model_y)))) {
+      next  # Skip this group if the model fitting failed
+    }
     
-    # Predict the time when the ball passes through the goalposts
-    # For simplicity, assume the goalposts are at y = 0 (goal line).
-    # Adjust this value based on actual goalpost positions.
-    goal_time <- min(group_data$time_num) + (max(group_data$time_num) - min(group_data$time_num)) / 2
+    # Extract coefficients from the model
+    y_intercept <- coef(model_y)[1]
+    y_slope <- coef(model_y)[2]
     
-    # Predict x and y coordinates at the goalposts
-    predicted_x <- predict(model_x, newdata = data.frame(time_num = goal_time))
-    predicted_y <- predict(model_y, newdata = data.frame(time_num = goal_time))
+    # Determine the average x_ball to find the closest target x
+    average_x <- mean(play_data$x_ball)
     
-    # Get the displayName, gameId, and playId for this group
-    displayName <- unique(group_data$displayName)
-    gameId <- unique(group_data$gameId)
-    playId <- unique(group_data$playId)
+    # Determine which endzone (0 or 120) is closest to the average x-coordinate
+    target_x <- ifelse(abs(average_x - 0) < abs(average_x - 120), 0, 120)
+    
+    # Predict y at the calculated target_x using the linear regression equation for y_ball
+    predicted_y <- y_intercept + y_slope * target_x
+    
+    # Get metadata for this play
+    displayName <- unique(play_data$displayName)
+    gameId <- unique(play_data$gameId)
+    playId <- unique(play_data$playId)
     
     # Append the prediction to the results data frame
     predictions <- rbind(predictions, data.frame(
       gameId = gameId,
       playId = playId,
       displayName = displayName,
-      predicted_x = predicted_x,
+      predicted_x = target_x,
       predicted_y = predicted_y
     ))
   }
-  
-  return(predictions)
-}
-
-# Load the merged data for each year
-years <- c(2018, 2019, 2020)
-for (year in years) {
-  file_name <- paste0("analysis_data/merged_fpw_", year, ".csv")
-  merged_df <- read.csv(file_name)
-  
-  # Apply the function to the merged data
-  predictions <- predict_ball_position(merged_df)
   
   # Save the predictions to a CSV file
   output_file_name <- paste0("analysis_data/predictions_", year, ".csv")
@@ -403,45 +712,129 @@ for (year in years) {
   # Print a message to confirm the file has been saved
   print(paste("Predictions for year", year, "saved to", output_file_name))
 }
+
+# Call the function for the years 2019 and 2020
+years <- c(2018, 2019, 2020)
+for (year in years) {
+  predict_ball_position(year)
+}
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Function to add starting_x and starting_y based on playDirection
+add_starting_coordinates <- function(predictions_file, tracking_file, output_file) {
+  # Load predictions data
+  predictions <- read.csv(predictions_file)
+  
+  # Load tracking data
+  tracking <- read.csv(tracking_file)
+  
+  # Filter tracking data to include only rows where team == "football"
+  tracking <- tracking %>%
+    filter(team == "football")
+  
+  # Find the starting coordinates based on playDirection
+  starting_coordinates <- tracking %>%
+    group_by(gameId, playId) %>%
+    summarize(
+      playDirection = first(playDirection),  # Get the play direction for the play
+      starting_x = ifelse(
+        playDirection == "left", max(x, na.rm = TRUE), min(x, na.rm = TRUE)
+      ),
+      starting_y = ifelse(
+        playDirection == "left",
+        y[which.max(x)],  # Corresponding y for max x
+        y[which.min(x)]   # Corresponding y for min x
+      )
+    )
+  
+  # Merge starting coordinates into predictions data
+  updated_predictions <- predictions %>%
+    left_join(starting_coordinates, by = c("gameId", "playId"))
+  
+  # Save the updated predictions data to a new CSV file
+  write.csv(updated_predictions, output_file, row.names = FALSE)
+  
+  print(paste("Updated predictions saved to", output_file))
+}
+
+# Apply the function for each year
+years <- c(2018, 2019, 2020)
+for (year in years) {
+  predictions_file <- paste0("analysis_data/predictions_", year, ".csv")
+  tracking_file <- paste0("processed_data/tracking", year, ".csv")
+  output_file <- paste0("analysis_data/updated_predictions_", year, ".csv")
+  
+  add_starting_coordinates(predictions_file, tracking_file, output_file)
+}
 ```
 
 ```{r}
 # Load necessary libraries
-library(readr)
 library(dplyr)
 
-# Function to calculate distance and update CSV
-calculate_deviation <- function(file_path) {
-  # Read the CSV file
-  data <- read_csv(file_path)
+# Function to calculate angles and deviation distance
+add_kick_angles_and_deviation <- function(predictions_file, output_file) {
+  # Load predictions data
+  predictions <- read.csv(predictions_file)
   
-  # Calculate the distance
-  data$deviation <- ifelse(abs(data$predicted_x) <= 60,
-                           sqrt((abs(data$predicted_x) - 0)^2 + (abs(data$predicted_y) - 26.65)^2),
-                           sqrt((abs(data$predicted_x) - 120)^2 + (abs(data$predicted_y) - 26.65)^2))
+  # Define the center of the goalposts (y = 26.65)
+  goal_center_y <- 26.65
   
-  # Write the updated data back to the CSV file
-  write.csv(data, file_path, row.names = FALSE)
+  # Calculate angles and deviation distance
+  predictions <- predictions %>%
+    mutate(
+      # Calculate base and hypotenuse for ideal angle
+      base_ideal = abs(predicted_x - starting_x),
+      hypotenuse_ideal = sqrt(base_ideal^2 + (goal_center_y - starting_y)^2),
+      
+      # Calculate base and hypotenuse for real angle
+      base_real = abs(predicted_x - starting_x),
+      hypotenuse_real = sqrt(base_real^2 + (predicted_y - starting_y)^2),
+      
+      # Ideal angle: angle if the kick were aimed perfectly at the center of the goalposts
+      ideal_angle = acos(base_ideal / hypotenuse_ideal) * (180 / pi),  # Convert to degrees
+      
+      # Real angle: angle based on predicted_y
+      real_angle = acos(base_real / hypotenuse_real) * (180 / pi),     # Convert to degrees
+      
+      # Deviation distance: Euclidean distance between ideal kick and actual kick
+      deviation_distance = sqrt((goal_center_y - predicted_y)^2 + (predicted_x - predicted_x)^2)
+    )
+  
+  predictions <- predictions |> select(gameId,playId,displayName,predicted_x,predicted_y,playDirection,starting_x,starting_y, ideal_angle, real_angle, deviation_distance)
+  
+  # Save the updated dataset with ideal_angle, real_angle, and deviation_distance columns
+  write.csv(predictions, output_file, row.names = FALSE)
+  
+  print(paste("Updated predictions with angles and deviation saved to", output_file))
 }
 
-# Specify the directory path and file names
-dir_path <- "analysis_data/"
-file_names <- c("predictions_2018.csv", "predictions_2019.csv", "predictions_2020.csv")
+# Apply the function for each year
+years <- c(2018, 2019, 2020)
+for (year in years) {
+  predictions_file <- paste0("analysis_data/updated_predictions_", year, ".csv")
+  output_file <- paste0("analysis_data/updated_predictions_complete_", year, ".csv")
+  
+  add_kick_angles_and_deviation(predictions_file, output_file)
+}
 
-# Get full file paths
-files <- file.path(dir_path, file_names)
-
-# Apply the function to each file
-lapply(files, calculate_deviation)
 ```
 
 ```{r}
 library(ggplot2)
-data = read.csv("analysis_data/predictions_2018.csv")
+data = read.csv("analysis_data/updated_predictions_complete_2018.csv")
 
 # Plot the distribution of "deviation"
-ggplot(data, aes(x = deviation)) +
+ggplot(data, aes(x = deviation_distance)) +
   geom_histogram(bins = 30, color = "black", fill = "lightblue") +
   labs(title = "Distribution of Deviation", x = "Deviation_2018", y = "Frequency")
+```
+```{r}
+greg_2018122311 = read.csv("processed_data/tracking2018.csv") |> filter(gameId == 2018122311) |> filter(playId == 683) |> filter(displayName == "Greg Zuerlein")
 ```
 
