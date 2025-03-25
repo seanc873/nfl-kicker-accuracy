@@ -82,3 +82,80 @@ for (year in years) {
 }
 ```
 
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Load the predictions data for 2018, 2019, and 2020
+predictions_2018 <- read.csv("analysis_data/updated_predictions_complete_2018.csv")
+predictions_2019 <- read.csv("analysis_data/updated_predictions_complete_2019.csv")
+predictions_2020 <- read.csv("analysis_data/updated_predictions_complete_2020.csv")
+
+# Load the plays data
+plays <- read.csv("processed_data/plays.csv") |> filter(specialTeamsResult %in% c("Kick Attempt Good", "Kick Attempt No Good"))
+
+# Create FG_success and XP_success based on plays data
+plays <- plays %>%
+  mutate(FG_success = ifelse(specialTeamsPlayType == "Field Goal" & specialTeamsResult == "Kick Attempt Good", 1,
+                              ifelse(specialTeamsPlayType == "Field Goal" & specialTeamsResult == "Kick Attempt No Good", 0, NA)),
+         XP_success = ifelse(specialTeamsPlayType == "Extra Point" & specialTeamsResult == "Kick Attempt Good", 1,
+                             ifelse(specialTeamsPlayType == "Extra Point" & specialTeamsResult == "Kick Attempt No Good", 0, NA))) %>%
+  select(gameId, playId, FG_success, XP_success)
+
+# Merge predictions with plays data to get FG_success and XP_success
+predictions_2018 <- predictions_2018 %>%
+  left_join(plays, by = c("gameId", "playId"))
+predictions_2019 <- predictions_2019 %>%
+  left_join(plays, by = c("gameId", "playId"))
+predictions_2020 <- predictions_2020 %>%
+  left_join(plays, by = c("gameId", "playId"))
+
+# Initialize an empty data frame to store results
+results <- data.frame()
+
+# Function to calculate metrics for a given year
+calculate_metrics <- function(year, predictions) {
+  # Randomly split kicks into two groups for each player
+  set.seed(123)  # For reproducibility
+  predictions <- predictions %>%
+    group_by(displayName) %>%
+    mutate(group = ifelse(row_number() <= n() / 2, "A", "B"))  # Split into two groups
+  
+  # Calculate metrics for each group
+  group_metrics <- predictions %>%
+    group_by(displayName, group) %>%
+    summarise(
+      avg_angle_deviation = mean(deviation_distance, na.rm = TRUE),
+      FG_percent = sum(FG_success, na.rm = TRUE) / 
+                   (sum(specialTeamsResult == "Kick Attempt Good", na.rm = TRUE) + 
+                    sum(specialTeamsResult == "Kick Attempt No Good", na.rm = TRUE)),  # Total successful FG / Total FG attempts
+      XP_percent = sum(XP_success, na.rm = TRUE) / 
+                   (sum(specialTeamsResult == "Kick Attempt Good", na.rm = TRUE) + 
+                    sum(specialTeamsResult == "Kick Attempt No Good", na.rm = TRUE)),  # Total successful XP / Total XP attempts
+      sample_size = n()  # Sample size for each player-group
+    )
+  
+  # Append the results to the output data frame
+  results <<- rbind(results, group_metrics)
+  
+  # Save the results to a CSV file
+  output_file_name <- paste0("analysis_data/stability_analysis_2_", year, ".csv")
+  write.csv(results, output_file_name, row.names = FALSE)
+  
+  # Print a message to confirm the file has been saved
+  print(paste("Stability analysis for year", year, "saved to", output_file_name))
+}
+
+# Call the function for the years 2018, 2019, and 2020
+years <- c(2018, 2019, 2020)
+for (year in years) {
+  if (year == 2018) {
+    calculate_metrics(year, predictions_2018)
+  } else if (year == 2019) {
+    calculate_metrics(year, predictions_2019);
+  } else {
+    calculate_metrics(year, predictions_2020);
+  }
+}
+```
+
