@@ -408,15 +408,22 @@ cleaned <- combined %>%
 library(dplyr)
 library(readr)
 
-# Load both CSV files
+# Load CSV
 combined_stats <- read_csv("modelling_data/combined_stats.csv")
 
-# Merge the two datasets based on displayName
+# Merge with 'cleaned' dataset on displayName
 merged_stats <- full_join(combined_stats, cleaned, by = "displayName")
 
-# Save the merged dataset
-write_csv(merged_stats, "modelling_data/combined_stats_final.csv")
+# Reorder columns: Group 1 first, then Group 2
+ordered_stats <- merged_stats %>%
+  select(displayName, 
+         FG_percent_Group_1, FG_abs_AD_Group_1, FGAX_group1, 
+         XP_percent_Group_1, XP_abs_AD_Group_1, XPAX_group1,
+         FG_percent_Group_2, FG_abs_AD_Group_2, FGAX_group2, 
+         XP_percent_Group_2, XP_abs_AD_Group_2, XPAX_group2)
 
+# Save the reordered dataset
+write_csv(ordered_stats, "modelling_data/combined_stats_final.csv")
 ```
 
 ```{r}
@@ -454,7 +461,102 @@ corrplot(correlation_matrix, method = "color",
          cex.main = 1.5) # Title size
 ```
 
-```{r}
 
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+
+# Load the data
+data <- read.csv("modelling_data/combined_stats_final.csv")
+
+# Define new column order (Group 1 first, Group 2 second)
+ordered_columns <- c(
+  'FG_percent_Group_1', 'XP_percent_Group_1', 'FG_abs_AD_Group_1', 'XP_abs_AD_Group_1', 'FGAX_group1', 'XPAX_group1',
+  'FG_percent_Group_2', 'XP_percent_Group_2', 'FG_abs_AD_Group_2', 'XP_abs_AD_Group_2', 'FGAX_group2', 'XPAX_group2'
+)
+
+# Select and reorder columns
+df <- data[ordered_columns]
+
+# Flip AD correlations (since smaller AD is better)
+df$FG_abs_AD_Group_1 <- -df$FG_abs_AD_Group_1
+df$FG_abs_AD_Group_2 <- -df$FG_abs_AD_Group_2
+df$XP_abs_AD_Group_1 <- -df$XP_abs_AD_Group_1
+df$XP_abs_AD_Group_2 <- -df$XP_abs_AD_Group_2
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(df, use = "complete.obs")
+
+# Save as PNG with specified dimensions
+png("modelling_data/correlation_heatmap_mod.png", width = 800, height = 600) 
+
+# Create a heatmap
+corrplot(correlation_matrix, method = "color", 
+         addCoef.col = "black", # Add correlation coefficients
+         tl.col = "black", # Text label color
+         tl.srt = 45, # Text label rotation
+         number.cex = 0.7, # Adjust size of correlation coefficients
+         title = "Correlation Heatmap of FG%/XP% and FGAX/XPAX (Flipped AD, Ordered Groups)",
+         mar = c(0, 0, 1, 0), # Margins
+         cex.main = 1.5) # Title size
+```
+
+
+
+======================================================================================================================================================
+[CODE BELOW IFFY, NOT TESTED!]
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Load data
+data <- read_csv("modelling_data/combined_stats_final.csv")
+
+# Calculate correlation at different sample size thresholds
+calculate_correlation <- function(min_attempts) {
+  filtered_data <- data %>% 
+    rowwise() %>%
+    mutate(FG_attempts = FG_percent_Group_1 + FG_percent_Group_2) %>%
+    filter(FG_attempts >= min_attempts)
+  
+  cor_fg <- cor(filtered_data$FG_abs_AD_Group_1, filtered_data$FG_percent_Group_2, use="complete.obs")
+  cor_fgax <- cor(filtered_data$FGAX_group1, filtered_data$FGAX_group2, use="complete.obs")
+  cor_fg_ad <- cor(filtered_data$FG_abs_AD_Group_1, filtered_data$FG_abs_AD_Group_2, use="complete.obs")
+  
+  cor_xp <- cor(filtered_data$XP_abs_AD_Group_1, filtered_data$XP_percent_Group_2, use="complete.obs")
+  cor_xpax <- cor(filtered_data$XPAX_group1, filtered_data$XPAX_group2, use="complete.obs")
+  cor_xp_ad <- cor(filtered_data$XP_abs_AD_Group_1, filtered_data$XP_abs_AD_Group_2, use="complete.obs")
+
+  return(data.frame(min_attempts, cor_fg, cor_fgax, cor_fg_ad, cor_xp, cor_xpax, cor_xp_ad))
+}
+
+# Generate correlation values for different minimum attempts
+sample_sizes <- seq(5, 200, by=5)  # Extend range to match paper's scale
+cor_data <- bind_rows(lapply(sample_sizes, calculate_correlation))
+
+# Pivot for ggplot
+cor_data_long <- cor_data %>%
+  pivot_longer(cols = -min_attempts, names_to = "metric", values_to = "correlation")
+
+# Plot FG correlations
+ggplot(cor_data_long %>% filter(metric %in% c("cor_fg", "cor_fgax", "cor_fg_ad")), 
+       aes(x = min_attempts, y = correlation, color = metric)) +
+  geom_line(size = 1) +
+  labs(title = "Correlation of FG Metrics vs. Sample Size",
+       x = "Minimum FG Attempts", y = "Correlation") +
+  theme_minimal() +
+  scale_x_continuous(limits = c(0, 200))
+
+# Plot XP correlations
+ggplot(cor_data_long %>% filter(metric %in% c("cor_xp", "cor_xpax", "cor_xp_ad")), 
+       aes(x = min_attempts, y = correlation, color = metric)) +
+  geom_line(size = 1) +
+  labs(title = "Correlation of XP Metrics vs. Sample Size",
+       x = "Minimum XP Attempts", y = "Correlation") +
+  theme_minimal() +
+  scale_x_continuous(limits = c(0, 200))
 ```
 
