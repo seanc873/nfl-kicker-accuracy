@@ -1,0 +1,460 @@
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Function to merge data
+merge_data <- function(year) {
+  # Load data
+  if (year == 2018) {
+    football_df <- read.csv("analysis_data/football_coords_2018.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2018.csv")
+  } else if (year == 2019) {
+    football_df <- read.csv("analysis_data/football_coords_2019.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2019.csv")
+  } else if (year == 2020) {
+    football_df <- read.csv("analysis_data/football_coords_2020.csv")
+    wt_df <- read_csv("analysis_data/playerweather_coords_2020.csv")
+  } else {
+    stop("Invalid year. Please use 2018, 2019, or 2020.")
+  }
+  
+  # Merge the two data frames
+  merged_df <- football_df %>%
+    left_join(wt_df, by = c("gameId", "frameId", "playId")) %>%
+    select(
+      time = time.x, x_ball = x.x, y_ball = y.x, s_ball = s.x, a_ball = a.x, dis_ball = dis.x,
+      event = event.x, nflId = nflId.y, displayName = displayName.y, 
+      #position = position.y, team = team.y,
+      frameId = frameId, playId = playId, gameId = gameId,
+      Temperature = Temperature, DewPoint = DewPoint, Humidity = Humidity, Precipitation = Precipitation,
+      WindSpeed = WindSpeed, WindDirection = WindDirection, Pressure = Pressure, EstimatedCondition = EstimatedCondition,
+      #quarter = quarter,
+      specialTeamsPlayType = specialTeamsPlayType,
+      specialTeamsResult = specialTeamsResult,
+      #kickerId = kickerId,
+      yardlineNumber = yardlineNumber,
+      #gameClock = gameClock,
+      #preSnapHomeScore = preSnapHomeScore,
+      #preSnapVisitorScore = preSnapVisitorScore,
+      kickLength = kickLength,
+      #absoluteYardlineNumber = absoluteYardlineNumber
+    )
+  
+  merged_df_fg <- merged_df %>% filter(specialTeamsPlayType == "Field Goal")
+  merged_df_xp <- merged_df %>% filter(specialTeamsPlayType == "Extra Point")
+  
+  # Save the merged data frame
+  write.csv(merged_df_fg, paste0("modelling_data/all_combined_fg_", year, ".csv"), row.names = FALSE)
+  write.csv(merged_df_xp, paste0("modelling_data/all_combined_xp_", year, ".csv"), row.names = FALSE)
+  
+  return(merged_df)
+}
+
+# Apply the function to each year
+for (year in c(2018, 2019, 2020)) {
+  merged_df <- merge_data(year)
+}
+```
+
+```{r}
+## Load necessary libraries
+library(dplyr)
+
+# Function to retain only the middle row for every 5 rows
+retain_middle_rows <- function(file_path) {
+  # Load the data
+  data <- read.csv(file_path)
+  
+  # Retain only the middle row for every 5 rows
+  middle_rows <- data %>%
+    group_by(group = (row_number() - 1) %/% 5) %>%  # Create groups of 5 rows
+    slice(3) %>%                                   # Retain only the middle row of each group
+    ungroup() %>%                                  # Remove grouping
+    select(-group)                                 # Drop temporary grouping column
+  
+  return(middle_rows)
+}
+
+# Apply the function to datasets for different years and types (FG and XP)
+file_paths_fg <- list(
+  "modelling_data/all_combined_fg_2018.csv",
+  "modelling_data/all_combined_fg_2019.csv",
+  "modelling_data/all_combined_fg_2020.csv"
+)
+
+file_paths_xp <- list(
+  "modelling_data/all_combined_xp_2018.csv",
+  "modelling_data/all_combined_xp_2019.csv",
+  "modelling_data/all_combined_xp_2020.csv"
+)
+
+# Save processed data as variables for FG
+middle_rows_fg_2018 <- retain_middle_rows(file_paths_fg[[1]])
+middle_rows_fg_2019 <- retain_middle_rows(file_paths_fg[[2]])
+middle_rows_fg_2020 <- retain_middle_rows(file_paths_fg[[3]])
+
+# Save processed data as variables for XP
+middle_rows_xp_2018 <- retain_middle_rows(file_paths_xp[[1]])
+middle_rows_xp_2019 <- retain_middle_rows(file_paths_xp[[2]])
+middle_rows_xp_2020 <- retain_middle_rows(file_paths_xp[[3]])
+
+# Combine middle rows datasets for FG and XP separately
+combined_middle_rows_fg <- bind_rows(
+  middle_rows_fg_2018 %>% mutate(year = 2018),
+  middle_rows_fg_2019 %>% mutate(year = 2019),
+  middle_rows_fg_2020 %>% mutate(year = 2020)
+)
+
+combined_middle_rows_xp <- bind_rows(
+  middle_rows_xp_2018 %>% mutate(year = 2018),
+  middle_rows_xp_2019 %>% mutate(year = 2019),
+  middle_rows_xp_2020 %>% mutate(year = 2020)
+)
+
+# Function to split player data into two chronological chunks
+split_player_data <- function(data, output_prefix) {
+  # Group by player (displayName)
+  player_groups <- data %>% arrange(displayName, time) # Ensure chronological order
+  
+  # Initialize lists to store group1 and group2 for all players
+  group_1_list <- list()
+  group_2_list <- list()
+  
+  # Iterate over each player and split their data
+  unique_players <- unique(player_groups$displayName)
+  
+  for (player in unique_players) {
+    player_data <- player_groups %>% filter(displayName == player)
+    
+    # Split into two chronological chunks
+    n <- nrow(player_data)
+    group_1 <- player_data[1:(n %/% 2), ]   # First half
+    group_2 <- player_data[(n %/% 2 + 1):n, ]   # Second half
+    
+    # Append to lists
+    group_1_list[[player]] <- group_1
+    group_2_list[[player]] <- group_2
+  }
+  
+  # Combine all players' data into two separate data frames
+  group_1_combined <- bind_rows(group_1_list)
+  group_2_combined <- bind_rows(group_2_list)
+  
+  # Save the groups into separate CSV files
+  write.csv(group_1_combined, paste0(output_prefix, "_group1.csv"), row.names = FALSE)
+  write.csv(group_2_combined, paste0(output_prefix, "_group2.csv"), row.names = FALSE)
+  
+  print(paste("Data split and saved as", paste0(output_prefix, "_group1.csv"), "and", paste0(output_prefix, "_group2.csv")))
+}
+
+# Apply the function to split FG data for all players
+split_player_data(combined_middle_rows_fg, "modelling_data/combined_middle_rows_fg")
+
+# Apply the function to split XP data for all players
+split_player_data(combined_middle_rows_xp, "modelling_data/combined_middle_rows_xp")
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Function to calculate raw percentage (FG% or XP%) for each player
+calculate_raw_percent <- function(file_path) {
+  # Load data
+  data <- read.csv(file_path)
+  
+  # Calculate raw percentage for each player
+  stats <- data %>%
+    mutate(made = ifelse(specialTeamsResult == "Kick Attempt Good", 1, 0)) %>% # Mark successful kicks
+    group_by(displayName) %>%
+    summarize(
+      raw_percent = (sum(made, na.rm = TRUE) / n()) * 100  # Raw percentage
+    )
+  
+  return(stats)
+}
+
+# File paths for FG and XP groups
+file_paths_fg <- list(
+  "modelling_data/combined_middle_rows_fg_group1.csv",
+  "modelling_data/combined_middle_rows_fg_group2.csv"
+)
+
+file_paths_xp <- list(
+  "modelling_data/combined_middle_rows_xp_group1.csv",
+  "modelling_data/combined_middle_rows_xp_group2.csv"
+)
+
+# Calculate FG% and XP% for each group
+fg_stats_group_1 <- calculate_raw_percent(file_paths_fg[[1]]) %>% rename(FG_percent_Group_1 = raw_percent)
+fg_stats_group_2 <- calculate_raw_percent(file_paths_fg[[2]]) %>% rename(FG_percent_Group_2 = raw_percent)
+xp_stats_group_1 <- calculate_raw_percent(file_paths_xp[[1]]) %>% rename(XP_percent_Group_1 = raw_percent)
+xp_stats_group_2 <- calculate_raw_percent(file_paths_xp[[2]]) %>% rename(XP_percent_Group_2 = raw_percent)
+
+# Combine all stats into a single table by player name
+combined_stats <- fg_stats_group_1 %>%
+  full_join(fg_stats_group_2, by = "displayName") %>%
+  full_join(xp_stats_group_1, by = "displayName") %>%
+  full_join(xp_stats_group_2, by = "displayName")
+
+# Print the combined stats for verification
+print("Combined FG and XP stats:")
+print(head(combined_stats))
+
+```
+
+```{r}
+library(readr)
+library(purrr)
+
+# Load all prediction files into one dataframe
+prediction_files <- list(
+  "analysis_data/updated_predictions_complete_2018.csv",
+  "analysis_data/updated_predictions_complete_2019.csv",
+  "analysis_data/updated_predictions_complete_2020.csv"
+)
+
+predictions <- prediction_files %>%
+  map_dfr(read_csv) %>%
+  select(gameId, playId, displayName, real_angle, ideal_angle) # Keep only necessary columns
+
+# Function to calculate mean absolute angle deviation per player
+calculate_mean_angle_dev <- function(kick_file) {
+  read_csv(kick_file) %>%
+    select(gameId, playId, displayName) %>%  # Keep only relevant columns before join
+    left_join(predictions, by = c("gameId", "playId", "displayName")) %>%  # Avoid duplicates
+    mutate(angle_dev = abs(real_angle - ideal_angle)) %>%  # Compute absolute deviation
+    group_by(displayName) %>%
+    summarize(mean_angle_dev = mean(angle_dev, na.rm = TRUE)) # Get mean per player
+}
+
+# Compute mean absolute angle deviation for each group
+fg_group1_angle_dev <- calculate_mean_angle_dev("modelling_data/combined_middle_rows_fg_group1.csv") %>% rename(FG_abs_AD_Group_1 = mean_angle_dev)
+fg_group2_angle_dev <- calculate_mean_angle_dev("modelling_data/combined_middle_rows_fg_group2.csv") %>% rename(FG_abs_AD_Group_2 = mean_angle_dev)
+xp_group1_angle_dev <- calculate_mean_angle_dev("modelling_data/combined_middle_rows_xp_group1.csv") %>% rename(XP_abs_AD_Group_1 = mean_angle_dev)
+xp_group2_angle_dev <- calculate_mean_angle_dev("modelling_data/combined_middle_rows_xp_group2.csv") %>% rename(XP_abs_AD_Group_2 = mean_angle_dev)
+
+# Merge angle deviation data into combined_stats
+combined_stats_2 <- combined_stats %>%
+  full_join(fg_group1_angle_dev, by = "displayName") %>%
+  full_join(fg_group2_angle_dev, by = "displayName") %>%
+  full_join(xp_group1_angle_dev, by = "displayName") %>%
+  full_join(xp_group2_angle_dev, by = "displayName")
+
+write_csv(combined_stats_2, "modelling_data/combined_stats.csv")
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# File paths for player weather data (2018-2020)
+weather_files <- list(
+  "analysis_data/playerweather_coords_2018.csv",
+  "analysis_data/playerweather_coords_2019.csv",
+  "analysis_data/playerweather_coords_2020.csv"
+)
+
+# Function to filter relevant columns
+filter_weather_data <- function(file_path) {
+  read_csv(file_path) %>%
+    select(gameId, playId, time, displayName, team, TimeMeasure, 
+           Temperature, DewPoint, Humidity, Precipitation, WindSpeed, 
+           WindDirection, Pressure, EstimatedCondition, quarter, 
+           specialTeamsPlayType, specialTeamsResult, gameClock, 
+           preSnapHomeScore, preSnapVisitorScore, kickLength)
+}
+
+# Read, filter, and combine all years' data
+filtered_data <- bind_rows(lapply(weather_files, filter_weather_data))
+
+# Remove duplicate gameId-playId pairs, keeping only the first occurrence
+filtered_data_unique <- filtered_data %>%
+  distinct(gameId, playId, .keep_all = TRUE)
+
+# Save the cleaned dataset
+write_csv(filtered_data_unique, "modelling_data/filtered_playerweather.csv")
+```
+
+```{r}
+# Logistic
+library(dplyr)
+library(tidyr)
+library(randomForest)
+library(xgboost)
+
+# Load the dataset
+data <- read.csv("modelling_data/filtered_playerweather.csv")
+
+# Impute missing values for weather-related variables
+# WindSpeed, WindDirection, and Precipitation are set to 0 if NA
+data$WindSpeed[is.na(data$WindSpeed)] <- 0
+data$WindDirection[is.na(data$WindDirection)] <- 0
+data$Precipitation[is.na(data$Precipitation)] <- 0
+
+# For the other weather variables (Temperature, DewPoint, Humidity, Pressure)
+# Numerical variables imputation (using mean)
+numerical_vars <- c("Temperature", "DewPoint", "Humidity", "Pressure")
+
+for (var in numerical_vars) {
+  data[[var]] <- ifelse(is.na(data[[var]]), mean(data[[var]], na.rm = TRUE), data[[var]])
+}
+
+# Prepare data for modeling
+data <- data %>%
+  filter(!is.na(kickLength)) %>%  # Only keep rows with a valid kickLength
+  mutate(kickLength = as.numeric(kickLength))
+
+# Create the feature set for modeling (exclude EstimatedCondition)
+feature_cols <- c("Temperature", "DewPoint", "Humidity", "Precipitation", "WindSpeed", 
+                  "WindDirection", "Pressure", "kickLength")
+
+# Separate the data into FG and XP based on specialTeamsPlayType
+fg_data <- data %>% filter(specialTeamsPlayType == "Field Goal")
+xp_data <- data %>% filter(specialTeamsPlayType == "Extra Point")
+
+# Logistic regression for FG and XP probability prediction (initial model)
+fg_model <- glm(specialTeamsResult == "Kick Attempt Good" ~ ., 
+                data = fg_data[, c(feature_cols, "specialTeamsResult")], 
+                family = binomial)
+
+xp_model <- glm(specialTeamsResult == "Kick Attempt Good" ~ ., 
+                data = xp_data[, c(feature_cols, "specialTeamsResult")], 
+                family = binomial)
+
+# Make predictions for FG and XP
+fg_data$predicted_xFG <- predict(fg_model, newdata = fg_data[, feature_cols], type = "response")
+xp_data$predicted_xXP <- predict(xp_model, newdata = xp_data[, feature_cols], type = "response")
+
+# Combine FG and XP predictions back into the original dataset
+data <- data %>%
+  left_join(fg_data[, c("gameId", "playId", "predicted_xFG")], by = c("gameId", "playId")) %>%
+  left_join(xp_data[, c("gameId", "playId", "predicted_xXP")], by = c("gameId", "playId"))
+
+# Replace predictions with NA for FG when it's an XP, and vice versa
+data$predicted_xFG[is.na(data$predicted_xFG) & data$specialTeamsPlayType == "Extra Point"] <- NA
+data$predicted_xXP[is.na(data$predicted_xXP) & data$specialTeamsPlayType == "Field Goal"] <- NA
+
+# If no prediction is available for FG or XP, set to 0
+data$predicted_xFG[is.na(data$predicted_xFG)] <- NA
+data$predicted_xXP[is.na(data$predicted_xXP)] <- NA
+
+# Save the resulting data to a new CSV file
+write.csv(data, "modelling_data/filtered_playerweather_logistic_pred.csv", row.names = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(readr)
+
+# Load the necessary data
+fg_group1 <- read_csv("modelling_data/combined_middle_rows_fg_group1.csv")
+fg_group2 <- read_csv("modelling_data/combined_middle_rows_fg_group2.csv")
+xp_group1 <- read_csv("modelling_data/combined_middle_rows_xp_group1.csv")
+xp_group2 <- read_csv("modelling_data/combined_middle_rows_xp_group2.csv")
+logistic_pred <- read_csv("modelling_data/filtered_playerweather_logistic_pred.csv")
+
+# Function to merge predicted probabilities
+merge_probs <- function(kick_data, pred_data) {
+  kick_data %>%
+    left_join(pred_data %>% select(gameId, playId, predicted_xFG, predicted_xXP), by = c("gameId", "playId"))
+}
+
+# Merge probabilities for each group
+fg_group1 <- merge_probs(fg_group1, logistic_pred)
+fg_group2 <- merge_probs(fg_group2, logistic_pred)
+xp_group1 <- merge_probs(xp_group1, logistic_pred)
+xp_group2 <- merge_probs(xp_group2, logistic_pred)
+
+# Function to compute FGAX and XPAX per player
+compute_fgax_xpax <- function(fg_data, xp_data) {
+  fg_data %>%
+    group_by(displayName) %>%
+    summarise(
+      FG_made = sum(specialTeamsResult == "Kick Attempt Good", na.rm = TRUE),
+      expected_FG = sum(predicted_xFG, na.rm = TRUE),
+      FGAX = FG_made - expected_FG
+    ) %>%
+    full_join(
+      xp_data %>%
+        group_by(displayName) %>%
+        summarise(
+          XP_made = sum(specialTeamsResult == "Kick Attempt Good", na.rm = TRUE),
+          expected_XP = sum(predicted_xXP, na.rm = TRUE),
+          XPAX = XP_made - expected_XP
+        ),
+      by = "displayName"
+    ) %>%
+    replace(is.na(.), 0) # Replace NAs with 0 for missing values
+}
+
+# Compute FGAX and XPAX for both groups
+combined <- compute_fgax_xpax(fg_group1, xp_group1) %>%
+  rename(FGAX_group1 = FGAX, XPAX_group1 = XPAX) %>%
+  full_join(compute_fgax_xpax(fg_group2, xp_group2) %>%
+              rename(FGAX_group2 = FGAX, XPAX_group2 = XPAX),
+            by = "displayName") %>%
+  replace(is.na(.), 0) # Ensure all missing values are replaced with 0
+
+cleaned <- combined %>%
+  select(-c(FG_made.x, expected_FG.x, XP_made.x, expected_XP.x,
+            FG_made.y, expected_FG.y, XP_made.y, expected_XP.y))
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Load both CSV files
+combined_stats <- read_csv("modelling_data/combined_stats.csv")
+
+# Merge the two datasets based on displayName
+merged_stats <- full_join(combined_stats, cleaned, by = "displayName")
+
+# Save the merged dataset
+write_csv(merged_stats, "modelling_data/combined_stats_final.csv")
+
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+
+# Load the data
+data <- read.csv("modelling_data/combined_stats_final.csv")
+
+# Select relevant columns
+columns_of_interest <- c(
+  'FG_percent_Group_1', 'FG_percent_Group_2',
+  'XP_percent_Group_1', 'XP_percent_Group_2',
+  'FG_abs_AD_Group_1', 'FG_abs_AD_Group_2',
+  'XP_abs_AD_Group_1', 'XP_abs_AD_Group_2',
+  'FGAX_group1', 'XPAX_group1', 'FGAX_group2', 'XPAX_group2'
+)
+
+df <- data[columns_of_interest]
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(df, use = "complete.obs")
+png("modelling_data/correlation_heatmap.png", width = 800, height = 600) # Save as PNG with specified dimensions
+
+# Create a heatmap
+corrplot(correlation_matrix, method = "color", 
+         addCoef.col = "black", # Add correlation coefficients
+         tl.col = "black", # Text label color
+         tl.srt = 45, # Text label rotation
+         number.cex = 0.7, # Adjust size of correlation coefficients
+         title = "Correlation Heatmap of FG%/XP% and FGAX/XPAX",
+         mar = c(0, 0, 1, 0), # Margins
+         cex.main = 1.5) # Title size
+```
+
+```{r}
+
+```
+
