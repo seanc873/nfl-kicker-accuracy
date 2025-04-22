@@ -1,8 +1,4 @@
----
-title: "nfl-kicker-accuracy"
-output: html_document
----
-
+# NFL Kicker Accuracy
 This project analyzes NFL field goal and extra point kicks with the goal of evaluating kicker performance through **context-aware statistical modeling**. Using play-by-play tracking data, game conditions, and weather variables, we estimate expected field goal success (xFG) and identify factors influencing kicker accuracy.
 
 ## 📊 Objective
